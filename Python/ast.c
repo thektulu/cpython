@@ -1744,6 +1744,69 @@ ast_for_ifexpr(struct compiling *c, const node *n)
                  c->c_arena);
 }
 
+/* where_item: expr = test */
+static whereitem_ty
+ast_for_where_item(struct compiling *c, const node *n)
+{
+    expr_ty value, name;
+
+    REQ(n, where_item);
+
+    name = ast_for_expr(c, CHILD(n, 0));
+    if (!name)
+        return NULL;
+
+    if (!set_context(c, name, Store, n)) {
+        return NULL;
+    }
+
+    value = ast_for_expr(c, CHILD(n, 2));
+    if (!value)
+        return NULL;
+
+    return whereitem(name, value, c->c_arena);
+}
+
+static asdl_seq *
+ast_for_where_items(struct compiling *c, const node *n)
+{
+    int i, n_items;
+    asdl_seq *items;
+
+    REQ(n, where_expr);
+
+    n_items = NCH(n) / 2;
+    items = _Py_asdl_seq_new(n_items, c->c_arena);
+    if (!items)
+        return NULL;
+    for (i = 1; i < NCH(n); i += 2) {
+        whereitem_ty item = ast_for_where_item(c, CHILD(n, i));
+        if (!item)
+            return NULL;
+        asdl_seq_SET(items, (i - 1) / 2, item);
+    }
+
+    return items;
+}
+
+static expr_ty
+ast_for_where(struct compiling *c, const node *n)
+{
+    expr_ty body;
+    asdl_seq *items;
+
+    assert(NCH(n) == 2);
+
+    body = ast_for_expr(c, CHILD(n, 0));
+    if (!body)
+        return NULL;
+    items = ast_for_where_items(c, CHILD(n, 1));
+    if (!items)
+        return NULL;
+
+    return Where(body, items, LINENO(n), n->n_col_offset, c->c_arena);
+}
+
 /*
    Count the number of 'for' loops in a comprehension.
 
@@ -2537,8 +2600,12 @@ ast_for_expr(struct compiling *c, const node *n)
             if (TYPE(CHILD(n, 0)) == lambdef ||
                 TYPE(CHILD(n, 0)) == lambdef_nocond)
                 return ast_for_lambdef(c, CHILD(n, 0));
-            else if (NCH(n) > 1)
-                return ast_for_ifexpr(c, n);
+            else if (NCH(n) > 1) {
+                if (NCH(n) == 2)
+                    return ast_for_where(c, n);
+                else
+                    return ast_for_ifexpr(c, n);
+            }
             /* Fallthrough */
         case or_test:
         case and_test:

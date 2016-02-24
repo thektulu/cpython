@@ -182,7 +182,7 @@ static int symtable_visit_argannotations(struct symtable *st, asdl_seq *args);
 static int symtable_implicit_arg(struct symtable *st, int pos);
 static int symtable_visit_annotations(struct symtable *st, stmt_ty s, arguments_ty, expr_ty);
 static int symtable_visit_withitem(struct symtable *st, withitem_ty item);
-
+static int symtable_visit_whereitem(struct symtable *st, whereitem_ty item);
 
 static identifier top = NULL, lambda = NULL, genexpr = NULL,
     listcomp = NULL, setcomp = NULL, dictcomp = NULL,
@@ -1397,6 +1397,10 @@ symtable_visit_expr(struct symtable *st, expr_ty e)
             VISIT_QUIT(st, 0);
         break;
     }
+    case Where_kind:
+        VISIT_SEQ(st, whereitem, e->v.Where.items);
+        VISIT(st, expr, e->v.Where.body);
+        break;
     case IfExp_kind:
         VISIT(st, expr, e->v.IfExp.test);
         VISIT(st, expr, e->v.IfExp.body);
@@ -1606,6 +1610,14 @@ symtable_visit_withitem(struct symtable *st, withitem_ty item)
     if (item->optional_vars) {
         VISIT(st, expr, item->optional_vars);
     }
+    return 1;
+}
+
+static int
+symtable_visit_whereitem(struct symtable *st, whereitem_ty item)
+{
+    VISIT(st, expr, item->value);
+    VISIT(st, expr, item->name);
     return 1;
 }
 

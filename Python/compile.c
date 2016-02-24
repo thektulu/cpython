@@ -1881,6 +1881,30 @@ compiler_ifexp(struct compiler *c, expr_ty e)
 }
 
 static int
+compiler_where(struct compiler *c, expr_ty e)
+{
+    basicblock *end;
+    whereitem_ty item;
+    Py_ssize_t i, len;
+
+    assert(e->kind == Where_kind);
+    end = compiler_new_block(c);
+    if (end == NULL)
+        return 0;
+
+    len = asdl_seq_LEN(e->v.Where.items);
+    for (i = 0; i < len; i++) {
+        item = asdl_seq_GET(e->v.Where.items, i);
+        VISIT(c, expr, item->value);
+        VISIT(c, expr, item->name);
+    }
+
+    VISIT(c, expr, e->v.Where.body);
+    compiler_use_next_block(c, end);
+    return 1;
+}
+
+static int
 compiler_lambda(struct compiler *c, expr_ty e)
 {
     PyCodeObject *co;
@@ -3883,6 +3907,8 @@ compiler_visit_expr(struct compiler *c, expr_ty e)
         break;
     case Lambda_kind:
         return compiler_lambda(c, e);
+    case Where_kind:
+        return compiler_where(c, e);
     case IfExp_kind:
         return compiler_ifexp(c, e);
     case Dict_kind:

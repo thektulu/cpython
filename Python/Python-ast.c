@@ -207,6 +207,11 @@ static char *Lambda_fields[]={
     "args",
     "body",
 };
+static PyTypeObject *Where_type;
+static char *Where_fields[]={
+    "body",
+    "items",
+};
 static PyTypeObject *IfExp_type;
 static char *IfExp_fields[]={
     "test",
@@ -491,6 +496,12 @@ _Py_IDENTIFIER(optional_vars);
 static char *withitem_fields[]={
     "context_expr",
     "optional_vars",
+};
+static PyTypeObject *whereitem_type;
+static PyObject* ast2obj_whereitem(void*);
+static char *whereitem_fields[]={
+    "name",
+    "value",
 };
 
 
@@ -918,6 +929,8 @@ static int init_types(void)
     if (!UnaryOp_type) return 0;
     Lambda_type = make_type("Lambda", expr_type, Lambda_fields, 2);
     if (!Lambda_type) return 0;
+    Where_type = make_type("Where", expr_type, Where_fields, 2);
+    if (!Where_type) return 0;
     IfExp_type = make_type("IfExp", expr_type, IfExp_fields, 3);
     if (!IfExp_type) return 0;
     Dict_type = make_type("Dict", expr_type, Dict_fields, 2);
@@ -1163,6 +1176,9 @@ static int init_types(void)
     withitem_type = make_type("withitem", &AST_type, withitem_fields, 2);
     if (!withitem_type) return 0;
     if (!add_attributes(withitem_type, NULL, 0)) return 0;
+    whereitem_type = make_type("whereitem", &AST_type, whereitem_fields, 2);
+    if (!whereitem_type) return 0;
+    if (!add_attributes(whereitem_type, NULL, 0)) return 0;
     initialized = 1;
     return 1;
 }
@@ -1186,6 +1202,7 @@ static int obj2ast_arg(PyObject* obj, arg_ty* out, PyArena* arena);
 static int obj2ast_keyword(PyObject* obj, keyword_ty* out, PyArena* arena);
 static int obj2ast_alias(PyObject* obj, alias_ty* out, PyArena* arena);
 static int obj2ast_withitem(PyObject* obj, withitem_ty* out, PyArena* arena);
+static int obj2ast_whereitem(PyObject* obj, whereitem_ty* out, PyArena* arena);
 
 mod_ty
 Module(asdl_seq * body, PyArena *arena)
@@ -1808,6 +1825,27 @@ Lambda(arguments_ty args, expr_ty body, int lineno, int col_offset, PyArena
     p->kind = Lambda_kind;
     p->v.Lambda.args = args;
     p->v.Lambda.body = body;
+    p->lineno = lineno;
+    p->col_offset = col_offset;
+    return p;
+}
+
+expr_ty
+Where(expr_ty body, asdl_seq * items, int lineno, int col_offset, PyArena
+      *arena)
+{
+    expr_ty p;
+    if (!body) {
+        PyErr_SetString(PyExc_ValueError,
+                        "field body is required for Where");
+        return NULL;
+    }
+    p = (expr_ty)PyArena_Malloc(arena, sizeof(*p));
+    if (!p)
+        return NULL;
+    p->kind = Where_kind;
+    p->v.Where.body = body;
+    p->v.Where.items = items;
     p->lineno = lineno;
     p->col_offset = col_offset;
     return p;
@@ -2534,6 +2572,28 @@ withitem(expr_ty context_expr, expr_ty optional_vars, PyArena *arena)
     return p;
 }
 
+whereitem_ty
+whereitem(expr_ty name, expr_ty value, PyArena *arena)
+{
+    whereitem_ty p;
+    if (!name) {
+        PyErr_SetString(PyExc_ValueError,
+                        "field name is required for whereitem");
+        return NULL;
+    }
+    if (!value) {
+        PyErr_SetString(PyExc_ValueError,
+                        "field value is required for whereitem");
+        return NULL;
+    }
+    p = (whereitem_ty)PyArena_Malloc(arena, sizeof(*p));
+    if (!p)
+        return NULL;
+    p->name = name;
+    p->value = value;
+    return p;
+}
+
 
 PyObject*
 ast2obj_mod(void* _o)
@@ -3060,6 +3120,20 @@ ast2obj_expr(void* _o)
         value = ast2obj_expr(o->v.Lambda.body);
         if (!value) goto failed;
         if (_PyObject_SetAttrId(result, &PyId_body, value) == -1)
+            goto failed;
+        Py_DECREF(value);
+        break;
+    case Where_kind:
+        result = PyType_GenericNew(Where_type, NULL, NULL);
+        if (!result) goto failed;
+        value = ast2obj_expr(o->v.Where.body);
+        if (!value) goto failed;
+        if (_PyObject_SetAttrId(result, &PyId_body, value) == -1)
+            goto failed;
+        Py_DECREF(value);
+        value = ast2obj_list(o->v.Where.items, ast2obj_whereitem);
+        if (!value) goto failed;
+        if (_PyObject_SetAttrId(result, &PyId_items, value) == -1)
             goto failed;
         Py_DECREF(value);
         break;
@@ -3881,6 +3955,35 @@ ast2obj_withitem(void* _o)
     value = ast2obj_expr(o->optional_vars);
     if (!value) goto failed;
     if (_PyObject_SetAttrId(result, &PyId_optional_vars, value) == -1)
+        goto failed;
+    Py_DECREF(value);
+    return result;
+failed:
+    Py_XDECREF(value);
+    Py_XDECREF(result);
+    return NULL;
+}
+
+PyObject*
+ast2obj_whereitem(void* _o)
+{
+    whereitem_ty o = (whereitem_ty)_o;
+    PyObject *result = NULL, *value = NULL;
+    if (!o) {
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+
+    result = PyType_GenericNew(whereitem_type, NULL, NULL);
+    if (!result) return NULL;
+    value = ast2obj_expr(o->name);
+    if (!value) goto failed;
+    if (_PyObject_SetAttrId(result, &PyId_name, value) == -1)
+        goto failed;
+    Py_DECREF(value);
+    value = ast2obj_expr(o->value);
+    if (!value) goto failed;
+    if (_PyObject_SetAttrId(result, &PyId_value, value) == -1)
         goto failed;
     Py_DECREF(value);
     return result;
@@ -5557,6 +5660,53 @@ obj2ast_expr(PyObject* obj, expr_ty* out, PyArena* arena)
             return 1;
         }
         *out = Lambda(args, body, lineno, col_offset, arena);
+        if (*out == NULL) goto failed;
+        return 0;
+    }
+    isinstance = PyObject_IsInstance(obj, (PyObject*)Where_type);
+    if (isinstance == -1) {
+        return 1;
+    }
+    if (isinstance) {
+        expr_ty body;
+        asdl_seq* items;
+
+        if (_PyObject_HasAttrId(obj, &PyId_body)) {
+            int res;
+            tmp = _PyObject_GetAttrId(obj, &PyId_body);
+            if (tmp == NULL) goto failed;
+            res = obj2ast_expr(tmp, &body, arena);
+            if (res != 0) goto failed;
+            Py_CLEAR(tmp);
+        } else {
+            PyErr_SetString(PyExc_TypeError, "required field \"body\" missing from Where");
+            return 1;
+        }
+        if (_PyObject_HasAttrId(obj, &PyId_items)) {
+            int res;
+            Py_ssize_t len;
+            Py_ssize_t i;
+            tmp = _PyObject_GetAttrId(obj, &PyId_items);
+            if (tmp == NULL) goto failed;
+            if (!PyList_Check(tmp)) {
+                PyErr_Format(PyExc_TypeError, "Where field \"items\" must be a list, not a %.200s", tmp->ob_type->tp_name);
+                goto failed;
+            }
+            len = PyList_GET_SIZE(tmp);
+            items = _Py_asdl_seq_new(len, arena);
+            if (items == NULL) goto failed;
+            for (i = 0; i < len; i++) {
+                whereitem_ty value;
+                res = obj2ast_whereitem(PyList_GET_ITEM(tmp, i), &value, arena);
+                if (res != 0) goto failed;
+                asdl_seq_SET(items, i, value);
+            }
+            Py_CLEAR(tmp);
+        } else {
+            PyErr_SetString(PyExc_TypeError, "required field \"items\" missing from Where");
+            return 1;
+        }
+        *out = Where(body, items, lineno, col_offset, arena);
         if (*out == NULL) goto failed;
         return 0;
     }
@@ -7478,6 +7628,42 @@ failed:
     return 1;
 }
 
+int
+obj2ast_whereitem(PyObject* obj, whereitem_ty* out, PyArena* arena)
+{
+    PyObject* tmp = NULL;
+    expr_ty name;
+    expr_ty value;
+
+    if (_PyObject_HasAttrId(obj, &PyId_name)) {
+        int res;
+        tmp = _PyObject_GetAttrId(obj, &PyId_name);
+        if (tmp == NULL) goto failed;
+        res = obj2ast_expr(tmp, &name, arena);
+        if (res != 0) goto failed;
+        Py_CLEAR(tmp);
+    } else {
+        PyErr_SetString(PyExc_TypeError, "required field \"name\" missing from whereitem");
+        return 1;
+    }
+    if (_PyObject_HasAttrId(obj, &PyId_value)) {
+        int res;
+        tmp = _PyObject_GetAttrId(obj, &PyId_value);
+        if (tmp == NULL) goto failed;
+        res = obj2ast_expr(tmp, &value, arena);
+        if (res != 0) goto failed;
+        Py_CLEAR(tmp);
+    } else {
+        PyErr_SetString(PyExc_TypeError, "required field \"value\" missing from whereitem");
+        return 1;
+    }
+    *out = whereitem(name, value, arena);
+    return 0;
+failed:
+    Py_XDECREF(tmp);
+    return 1;
+}
+
 
 static struct PyModuleDef _astmodule = {
   PyModuleDef_HEAD_INIT, "_ast"
@@ -7553,6 +7739,8 @@ PyInit__ast(void)
     if (PyDict_SetItemString(d, "UnaryOp", (PyObject*)UnaryOp_type) < 0) return
         NULL;
     if (PyDict_SetItemString(d, "Lambda", (PyObject*)Lambda_type) < 0) return
+        NULL;
+    if (PyDict_SetItemString(d, "Where", (PyObject*)Where_type) < 0) return
         NULL;
     if (PyDict_SetItemString(d, "IfExp", (PyObject*)IfExp_type) < 0) return
         NULL;
@@ -7681,6 +7869,8 @@ PyInit__ast(void)
     if (PyDict_SetItemString(d, "alias", (PyObject*)alias_type) < 0) return
         NULL;
     if (PyDict_SetItemString(d, "withitem", (PyObject*)withitem_type) < 0)
+        return NULL;
+    if (PyDict_SetItemString(d, "whereitem", (PyObject*)whereitem_type) < 0)
         return NULL;
     return m;
 }
